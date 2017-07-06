@@ -2,13 +2,17 @@
 from __future__ import print_function
 
 import tensorflow as tf
-import cv2
+# import cv2
 import sys
 sys.path.append("game/")
 import wrapped_flappy_bird as game
 import random
 import numpy as np
 from collections import deque
+
+import skimage.color
+import skimage.transform
+import skimage.filters
 
 GAME = 'bird' # the name of the game being played for log files
 NUM_ACTIONS = 2 # number of valid actions
@@ -32,8 +36,8 @@ def weight_variable(shape):
     return tf.Variable(initial)
 
 def bias_variable(shape):
-    # initial = tf.constant(0.01, shape = shape)
-    initial = tf.truncated_normal(shape, stddev = 0.01)
+    initial = tf.constant(0.01, shape = shape)
+    # initial = tf.truncated_normal(shape, stddev = 0.01)
     return tf.Variable(initial)
 
 def conv2d(x, W, stride):
@@ -104,11 +108,17 @@ def trainNetwork(s, readout, h_fc1, sess):
     do_nothing = np.zeros(NUM_ACTIONS)
     do_nothing[0] = 1
     x_t, r_0, terminal, score = game_state.frame_step(do_nothing)
-    x_t = cv2.cvtColor(cv2.resize(x_t, (80, 80)), cv2.COLOR_BGR2GRAY)
-    ret, x_t = cv2.threshold(x_t, 1, 255, cv2.THRESH_BINARY)
+    # # use cv2 to do image processing
+    # x_t = cv2.cvtColor(cv2.resize(x_t, (80, 80)), cv2.COLOR_BGR2GRAY)
+    # ret, x_t = cv2.threshold(x_t, 1, 255, cv2.THRESH_BINARY)
+    # use scikit-image to do image processing
+    x_t_gray = skimage.color.rgb2gray(x_t)
+    x_t_resize = skimage.transform.resize(x_t_gray, (80, 80), mode='constant')
+    threshold = skimage.filters.threshold_triangle(x_t_resize)
+    x_t = np.asarray(x_t_resize > threshold, dtype=float).reshape((80, 80))
     state_t = np.stack((x_t, x_t, x_t, x_t), axis=2)
 
-    sess.run(tf.initialize_all_variables())
+    sess.run(tf.global_variables_initializer())
 
     # # saving and loading networks
     # saver = tf.train.Saver()
@@ -151,9 +161,18 @@ def trainNetwork(s, readout, h_fc1, sess):
             steps_per_round.append(t - t_pre_round)
             final_score.append(score)
             t_pre_round = t
-        x_t1 = cv2.cvtColor(cv2.resize(x_t1_colored, (80, 80)), cv2.COLOR_BGR2GRAY)
-        ret, x_t1 = cv2.threshold(x_t1, 1, 255, cv2.THRESH_BINARY)
-        x_t1 = np.reshape(x_t1, (80, 80, 1))
+        
+        # # use cv2 (opencv) to do image processing
+        # x_t1 = cv2.cvtColor(cv2.resize(x_t1_colored, (80, 80)), cv2.COLOR_BGR2GRAY)
+        # ret, x_t1 = cv2.threshold(x_t1, 1, 255, cv2.THRESH_BINARY)
+        # x_t1 = np.reshape(x_t1, (80, 80, 1))
+        
+        # use scikit-image to do image processing
+        x_t1_gray = skimage.color.rgb2gray(x_t1_colored)
+        x_t1_resize = skimage.transform.resize(x_t1_gray, (80, 80), mode='constant')
+        threshold = skimage.filters.threshold_triangle(x_t1_resize)
+        x_t1 = np.asarray(x_t1_resize > threshold, dtype=float).reshape((80, 80, 1))
+        
         #s_t1 = np.append(x_t1, s_t[:,:,1:], axis = 2)
         state_t1 = np.append(x_t1, state_t[:, :, :3], axis=2)
 
