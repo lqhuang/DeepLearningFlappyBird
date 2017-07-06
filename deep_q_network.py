@@ -13,10 +13,16 @@ from collections import deque
 GAME = 'bird' # the name of the game being played for log files
 NUM_ACTIONS = 2 # number of valid actions
 GAMMA = 0.99 # decay rate of past observations
-OBSERVE = 100000. # timesteps to observe before training
-EXPLORE = 2000000. # frames over which to anneal epsilon
-FINAL_EPSILON = 0.0001 # final value of epsilon
-INITIAL_EPSILON = 0.0001 # starting value of epsilon
+# OBSERVE = 100000. # timesteps to observe before training
+# EXPLORE = 2000000. # frames over which to anneal epsilon
+# FINAL_EPSILON = 0.0001 # final value of epsilon
+# INITIAL_EPSILON = 0.0001 # starting value of epsilon
+OBSERVE = 5000
+EXPLORE = 3000000
+FINAL_EPSILON = 0.0001
+INITIAL_EPSILON = 0.1
+DECAY_RATE = 0.98
+DECAY_STEPS = 1000
 REPLAY_MEMORY = 50000 # number of previous transitions to remember
 BATCH = 32 # size of minibatch
 FRAME_PER_ACTION = 1
@@ -26,7 +32,8 @@ def weight_variable(shape):
     return tf.Variable(initial)
 
 def bias_variable(shape):
-    initial = tf.constant(0.01, shape = shape)
+    # initial = tf.constant(0.01, shape = shape)
+    initial = tf.truncated_normal(shape, stddev = 0.01)
     return tf.Variable(initial)
 
 def conv2d(x, W, stride):
@@ -89,14 +96,14 @@ def trainNetwork(s, readout, h_fc1, sess):
     # store the previous observations in replay memory
     D = deque()
 
-    # printing
-    a_file = open("logs_" + GAME + "/readout.txt", 'w')
-    h_file = open("logs_" + GAME + "/hidden.txt", 'w')
+    # # printing
+    # a_file = open("logs_" + GAME + "/readout.txt", 'w')
+    # h_file = open("logs_" + GAME + "/hidden.txt", 'w')
 
     # get the first state by doing nothing and preprocess the image to 80x80x4
     do_nothing = np.zeros(NUM_ACTIONS)
     do_nothing[0] = 1
-    x_t, r_0, terminal = game_state.frame_step(do_nothing)
+    x_t, r_0, terminal, score = game_state.frame_step(do_nothing)
     x_t = cv2.cvtColor(cv2.resize(x_t, (80, 80)), cv2.COLOR_BGR2GRAY)
     ret, x_t = cv2.threshold(x_t, 1, 255, cv2.THRESH_BINARY)
     state_t = np.stack((x_t, x_t, x_t, x_t), axis=2)
@@ -115,6 +122,9 @@ def trainNetwork(s, readout, h_fc1, sess):
     # start training
     epsilon = INITIAL_EPSILON
     t = 0
+    final_score = []  # length of score is equal to total rounds of games
+    t_pre_round = 0
+    steps_per_round = []
     while "flappy bird" != "angry bird":
         # choose an action epsilon greedily
         readout_t = readout.eval(feed_dict={s : [state_t]})[0]
@@ -132,10 +142,15 @@ def trainNetwork(s, readout, h_fc1, sess):
 
         # scale down epsilon
         if epsilon > FINAL_EPSILON and t > OBSERVE:
-            epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
+            # epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
+            epsilon = INITIAL_EPSILON * DECAY_RATE ** ((t - OBSERVE) / DECAY_STEPS)
 
         # run the selected action and observe next state and reward
-        x_t1_colored, reward_t, terminal = game_state.frame_step(action_t)
+        x_t1_colored, reward_t, terminal, score = game_state.frame_step(action_t)
+        if terminal:
+            steps_per_round.append(t - t_pre_round)
+            final_score.append(score)
+            t_pre_round = t
         x_t1 = cv2.cvtColor(cv2.resize(x_t1_colored, (80, 80)), cv2.COLOR_BGR2GRAY)
         ret, x_t1 = cv2.threshold(x_t1, 1, 255, cv2.THRESH_BINARY)
         x_t1 = np.reshape(x_t1, (80, 80, 1))
@@ -192,9 +207,14 @@ def trainNetwork(s, readout, h_fc1, sess):
         else:
             state = "train"
 
-        print("TIMESTEP", t, "/ STATE", state, \
-            "/ EPSILON", epsilon, "/ ACTION", action_index, "/ REWARD", reward_t, \
-            "/ Q_MAX %e" % np.max(readout_t))
+        print(
+            "TIMESTEP", t, "/ STATE", state, \
+            "/ EPSILON", "{:.4f}".format(epsilon), "/ ACTION", action_index, "/ REWARD", reward_t, \
+            "/ Q_MAX %e" % np.max(readout_t), \
+            "\n Total round: {0}, Average Score: {1:.2f}, Average steps per round: {2:.4f}".format(
+                len(final_score), np.mean(final_score), np.mean(steps_per_round)), \
+            "\n Average Score for the latest 50 rounds: {:.2f}".format(np.mean(final_score[-50:]))
+        )
         # write info to files
         '''
         if t % 10000 <= 100:
