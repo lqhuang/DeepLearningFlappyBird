@@ -9,6 +9,7 @@ import wrapped_flappy_bird as game
 import random
 import numpy as np
 from collections import deque
+import pygame
 
 import skimage.color
 import skimage.transform
@@ -21,15 +22,16 @@ GAMMA = 0.99 # decay rate of past observations
 # EXPLORE = 2000000. # frames over which to anneal epsilon
 # FINAL_EPSILON = 0.0001 # final value of epsilon
 # INITIAL_EPSILON = 0.0001 # starting value of epsilon
-OBSERVE = 5000
+OBSERVE = 10000
 EXPLORE = 3000000
 FINAL_EPSILON = 0.0001
 INITIAL_EPSILON = 0.1
-DECAY_RATE = 0.98
-DECAY_STEPS = 1000
+EPSILON_DECAY_RATE = 0.98
+EPSILON_DECAY_STEPS = 1000
 REPLAY_MEMORY = 50000 # number of previous transitions to remember
 BATCH = 32 # size of minibatch
 FRAME_PER_ACTION = 1
+SUPERVISED = True
 
 def weight_variable(shape):
     initial = tf.truncated_normal(shape, stddev = 0.01)
@@ -112,6 +114,7 @@ def trainNetwork(s, readout, h_fc1, sess):
     # x_t = cv2.cvtColor(cv2.resize(x_t, (80, 80)), cv2.COLOR_BGR2GRAY)
     # ret, x_t = cv2.threshold(x_t, 1, 255, cv2.THRESH_BINARY)
     # use scikit-image to do image processing
+    # use scikit-image to do image processing
     x_t_gray = skimage.color.rgb2gray(x_t)
     x_t_resize = skimage.transform.resize(x_t_gray, (80, 80), mode='constant')
     threshold = skimage.filters.threshold_triangle(x_t_resize)
@@ -153,7 +156,17 @@ def trainNetwork(s, readout, h_fc1, sess):
         # scale down epsilon
         if epsilon > FINAL_EPSILON and t > OBSERVE:
             # epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
-            epsilon = INITIAL_EPSILON * DECAY_RATE ** ((t - OBSERVE) / DECAY_STEPS)
+            epsilon = INITIAL_EPSILON * EPSILON_DECAY_RATE ** ((t - OBSERVE) / EPSILON_DECAY_STEPS)
+
+        # semi supervised
+        state_supervised = False
+        if OBSERVE and SUPERVISED:
+            # pygame implementation
+            for event in pygame.event.get():
+                if event.type == pygame.KEYUP or event.type == pygame.K_SPACE:
+                    print("----------Human Action----------")
+                    state_supervised = True
+                    action_t = np.asarray([0, 1])
 
         # run the selected action and observe next state and reward
         x_t1_colored, reward_t, terminal, score = game_state.frame_step(action_t)
@@ -161,18 +174,18 @@ def trainNetwork(s, readout, h_fc1, sess):
             steps_per_round.append(t - t_pre_round)
             final_score.append(score)
             t_pre_round = t
-        
+
         # # use cv2 (opencv) to do image processing
         # x_t1 = cv2.cvtColor(cv2.resize(x_t1_colored, (80, 80)), cv2.COLOR_BGR2GRAY)
         # ret, x_t1 = cv2.threshold(x_t1, 1, 255, cv2.THRESH_BINARY)
         # x_t1 = np.reshape(x_t1, (80, 80, 1))
-        
+
         # use scikit-image to do image processing
         x_t1_gray = skimage.color.rgb2gray(x_t1_colored)
         x_t1_resize = skimage.transform.resize(x_t1_gray, (80, 80), mode='constant')
         threshold = skimage.filters.threshold_triangle(x_t1_resize)
         x_t1 = np.asarray(x_t1_resize > threshold, dtype=float).reshape((80, 80, 1))
-        
+
         #s_t1 = np.append(x_t1, s_t[:,:,1:], axis = 2)
         state_t1 = np.append(x_t1, state_t[:, :, :3], axis=2)
 
@@ -219,19 +232,25 @@ def trainNetwork(s, readout, h_fc1, sess):
 
         # print info
         state = ""
-        if t <= OBSERVE:
+        if state_supervised:
+            state = "supervised"
+        elif t <= OBSERVE:
             state = "observe"
         elif t > OBSERVE and t <= OBSERVE + EXPLORE:
             state = "explore"
         else:
             state = "train"
-
+        
+        try:
+            max_score = np.max(final_score)
+        except ValueError:
+            max_score = 0
         print(
             "TIMESTEP", t, "/ STATE", state, \
             "/ EPSILON", "{:.4f}".format(epsilon), "/ ACTION", action_index, "/ REWARD", reward_t, \
             "/ Q_MAX %e" % np.max(readout_t), \
-            "\n Total round: {0}, Average Score: {1:.2f}, Average steps per round: {2:.4f}".format(
-                len(final_score), np.mean(final_score), np.mean(steps_per_round)), \
+            "\n Total rounds: {0}, Average Score: {1:.2f}, Max Score: {2}, Average steps per round: {3:.4f}".format(
+                len(final_score), np.mean(final_score), max_score, np.mean(steps_per_round)), \
             "\n Average Score for the latest 50 rounds: {:.2f}".format(np.mean(final_score[-50:]))
         )
         # write info to files
